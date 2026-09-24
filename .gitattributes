@@ -1,0 +1,29 @@
+# Normalise line endings across Windows / macOS / Linux.
+# Pair this with:  git config --global core.autocrlf false
+* text=auto eol=lf
+
+# --- explicit binary types (never touch these) ---
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.zip     binary
+*.gz      binary
+*.tar     binary
+*.onnx    binary
+*.bin     binary
+*.sqlite  binary
+*.parquet binary
+
+# --- Windows-only scripts keep CRLF ---
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# --- shell scripts MUST stay LF or they break ---
+*.sh   text eol=lf
+
+# --- generated data: keep it out of diffs and language stats ---
+data/**    linguist-generated=true
+reports/** linguist-generated=true

@@ -1,0 +1,53 @@
+# --- secrets & local config ---
+.env
+.env.*
+!.env.example
+
+# --- generated data (regenerate with scripts/generate_logs.py) ---
+data/raw/**
+data/processed/**
+data/chroma/**
+data/cache/**
+data/eval/labels.json
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/eval/.gitkeep
+!data/cache/.gitkeep
+
+# --- generated reports ---
+reports/*
+!reports/.gitkeep
+
+# --- models ---
+models/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# --- testing / tooling ---
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# --- editors / os ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- logs ---
+*.log
+personal.md 
+HANDOFF.md 
+lisajaanu

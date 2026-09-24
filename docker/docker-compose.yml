@@ -1,0 +1,52 @@
+# slrag — full local stack: API + Streamlit UI, sharing the data volume.
+#   docker compose -f docker/docker-compose.yml up --build
+#   API → http://localhost:8000/docs     UI → http://localhost:8501
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: slrag:latest
+    container_name: slrag-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      PYTHONPATH: /app/src
+      SQLITE_PATH: /app/data/processed/events.sqlite
+      CHROMA_DIR: /app/data/chroma
+    volumes:
+      - slrag-data:/app/data
+      - slrag-models:/app/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  ui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ui
+    image: slrag-ui:latest
+    container_name: slrag-ui
+    ports:
+      - "8501:8501"
+    env_file:
+      - ../.env
+    environment:
+      SLRAG_API_URL: http://api:8000
+    volumes:
+      - slrag-data:/app/data
+      - slrag-models:/app/models
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  slrag-data:
+  slrag-models:

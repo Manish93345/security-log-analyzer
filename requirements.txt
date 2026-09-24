@@ -1,0 +1,40 @@
+# slrag — runtime dependencies
+# Verified against PyPI on 2026-09-23. Python 3.11–3.13.
+
+# --- config / utils ---------------------------------------------------------
+python-dotenv==1.2.3
+pydantic==2.13.5
+
+# --- LangChain 1.x ---------------------------------------------------------
+langchain==1.4.2
+langchain-core==1.6.4
+langchain-text-splitters==1.1.2
+langgraph==1.2.12
+langchain-openai==1.6.4          # also drives Groq / OpenRouter / Ollama (OpenAI-compatible)
+langchain-google-genai==4.4.0    # Gemini free tier fallback
+langchain-chroma==1.1.0
+
+# --- vector store + lexical retrieval --------------------------------------
+chromadb==1.5.9
+rank-bm25==0.2.2
+
+# --- local, free embeddings + reranking (ONNX — no torch download) ---------
+fastembed==0.8.1
+flashrank==0.2.10
+
+# --- API + UI --------------------------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+streamlit==1.64.0
+httpx==0.28.1
+
+# --- data ------------------------------------------------------------------
+pandas>=2.2,<3
+numpy>=1.26,<3
+
+# --- OPTIONAL: heavier local embeddings (2 GB torch download). ------------
+# Uncomment and set EMBEDDING_BACKEND=sentence_transformers in .env
+# sentence-transformers==6.1.0
+
+# --- OPTIONAL: analytics engine instead of stdlib sqlite3 ------------------
+# duckdb>=1.1
