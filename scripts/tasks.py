@@ -75,7 +75,7 @@ def py_module(args: list[str], *, check: bool = False) -> subprocess.CompletedPr
     src = str(ROOT / "src")
     existing = os.environ.get("PYTHONPATH", "")
     path = f"{src}{os.pathsep}{existing}" if existing else src
-    return run([PY, *args], check=check, env={"PYTHONPATH": path})
+    return run([PY, "-m", *args], check=check, env={"PYTHONPATH": path})
 
 
 def _git(*args: str, check: bool = False) -> subprocess.CompletedProcess:
@@ -296,16 +296,18 @@ def task_loghub(args: argparse.Namespace) -> int:
 
 
 def task_ingest(args: argparse.Namespace) -> int:
-    return py_module(
-        [
-            "slrag.cli",
-            "ingest",
-            "--input",
-            args.input or "data/raw",
-            "--out",
-            args.out or "data/processed",
-        ]
-    ).returncode
+    """Phase 2: parse raw logs into sqlite + chunks.jsonl."""
+    cmd = ["slrag.cli", "ingest", "--raw", args.input or "data/raw"]
+    if getattr(args, "rebuild", False):
+        cmd.append("--rebuild")
+    if getattr(args, "limit", None):
+        cmd += ["--limit", str(args.limit)]
+    return py_module(cmd).returncode
+
+
+def task_stats(args: argparse.Namespace) -> int:
+    """Phase 2: corpus overview read straight from the sqlite store."""
+    return py_module(["slrag.cli", "stats"]).returncode
 
 
 def task_index(args: argparse.Namespace) -> int:
@@ -472,8 +474,10 @@ def build_parser() -> argparse.ArgumentParser:
     node.add_argument("--all", action="store_true", help="include the extra datasets")
 
     node = add("ingest", task_ingest, "parse raw logs into events.sqlite + chunks.jsonl (Phase 2)")
-    node.add_argument("--input", default=None)
-    node.add_argument("--out", default=None)
+    node.add_argument("--input", default=None, help="raw file or directory (default: data/raw)")
+    node.add_argument("--rebuild", action="store_true", help="drop and recreate the tables")
+    node.add_argument("--limit", type=int, default=None, help="stop after N events (smoke test)")
+    add("stats", task_stats, "corpus overview from the sqlite store (Phase 2)")
     node = add("index", task_index, "embed chunks into Chroma (Phase 3)")
     node.add_argument("--limit", type=int, default=None, help="index only the first N chunks")
     node = add("ask", task_ask, "ask a question from the CLI (Phase 4)")

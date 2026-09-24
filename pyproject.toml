@@ -34,3 +34,6 @@ ignore = ["E501", "B008"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011", "SIM117"]
+
+[project.scripts]
+slrag = "slrag.cli:main"

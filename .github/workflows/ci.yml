@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check src tests scripts
+
+      - name: Unit tests (no network, no models)
+        run: pytest -m "not integration and not llm and not slow" --cov=slrag --cov-report=term-missing
+
+      - name: Verify corpus generator is deterministic
+        run: |
+          python scripts/generate_logs.py --days 2 --events-per-day 500 --out /tmp/corpus_a
+          python scripts/generate_logs.py --days 2 --events-per-day 500 --out /tmp/corpus_b
+          python - <<'PY'
+          import hashlib, pathlib
+          def digest(root):
+              h = hashlib.sha256()
+              for p in sorted(pathlib.Path(root).rglob("*")):
+                  if p.is_file():
+                      h.update(p.name.encode())
+                      h.update(p.read_bytes())
+              return h.hexdigest()
+          a, b = digest("/tmp/corpus_a"), digest("/tmp/corpus_b")
+          assert a == b, f"generator is not deterministic: {a} != {b}"
+          print("deterministic:", a[:16])
+          PY

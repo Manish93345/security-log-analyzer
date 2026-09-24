@@ -47,7 +47,18 @@ coverage.xml
 Thumbs.db
 
 # --- logs ---
+# Runtime logs only.
+#
+# NOTE: the generated sample corpus is deliberately kept OUT of the repository.
+# Its CloudTrail records carry synthetic AWS-shaped temporary access keys ("ASIA…")
+# produced by scripts/generate_logs.py. They are not real credentials, but GitHub
+# secret scanning reports them as leaked AWS keys, which raises security alerts on
+# every push. Generated log data never belongs in the repo anyway — regenerate it
+# locally with `python scripts/tasks.py corpus-sample`.
 *.log
-personal.md 
-HANDOFF.md 
-lisajaanu
+!tests/fixtures/**
+!tests/fixtures/**/*.log
+
+# generated sample corpus — never commit (see the note above)
+slrag-sample-corpus/
+tests/fixtures/sample-corpus/
