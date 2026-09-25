@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "slrag"
-version = "0.2.0"
+version = "0.3.0"
 description = "RAG-powered security log analyzer over AWS CloudTrail and Linux system logs"
 requires-python = ">=3.11"
 

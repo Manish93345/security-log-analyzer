@@ -18,10 +18,14 @@ retrieval:
   candidate_pool: 50         # per-retriever pool before fusion
   rrf_k: 60                  # Reciprocal Rank Fusion constant
   rerank_enabled: true
-  rerank_model: ms-marco-MiniLM-L-6-v2
+  rerank_backend: fastembed  # fastembed | flashrank | none
+  rerank_model: ms-marco-MiniLM-L-6-v2   # aliased to Xenova/ms-marco-MiniLM-L-6-v2
+  index_batch_size: 256      # windows per Chroma add (memory guard while indexing)
+  chroma_collection: slrag_windows
   bm25:
     k1: 1.5
     b: 0.75
+    max_tokens: 512          # per-window token cap; bounds the in-memory BM25 index
 
 chunking:
   gap_minutes: 15            # incident-window merge threshold

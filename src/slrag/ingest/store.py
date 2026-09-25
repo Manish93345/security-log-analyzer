@@ -349,6 +349,30 @@ class EventStore:
         ).fetchone()
         return self._row_to_chunk(row) if row else None
 
+    def chunks_by_ids(self, chunk_ids: Sequence[str]) -> dict[str, Chunk]:
+        """Fetch several windows in ONE query, without their event membership.
+
+        The retrieval pipeline needs the rendered ``text`` of ~50 candidates per question;
+        calling :meth:`chunk` in a loop would issue 50 queries. Membership is skipped because
+        citations are only rendered for the handful of windows actually shown to the user.
+        """
+        wanted = [chunk_id for chunk_id in dict.fromkeys(chunk_ids) if chunk_id]
+        if not wanted:
+            return {}
+
+        found: dict[str, Chunk] = {}
+        # Old SQLite builds cap host parameters at 999, so the IN list is chunked defensively.
+        for start in range(0, len(wanted), 500):
+            window = wanted[start : start + 500]
+            placeholders = ", ".join("?" for _ in window)
+            rows = self.conn.execute(
+                f"SELECT * FROM chunks WHERE chunk_id IN ({placeholders})", window
+            ).fetchall()
+            for row in rows:
+                chunk = self._row_to_chunk(row, load_members=False)
+                found[chunk.chunk_id] = chunk
+        return found
+
     def events_for_chunk(self, chunk_id: str) -> list[Event]:
         """The raw records behind a window, in original order (for citations)."""
         rows = self.conn.execute(
@@ -506,7 +530,9 @@ class EventStore:
     # ------------------------------------------------------------- row mappers
     @staticmethod
     def _row_to_event(row: sqlite3.Row) -> Event:
-        payload = {key: row[key] for key in row.keys() if key in Event.__dataclass_fields__}
+        # sqlite3.Row iterates its VALUES, not its column names, so ruff's SIM118 autofix
+        # (`for key in row`) would filter out every column and return an empty payload.
+        payload = {key: row[key] for key in row.keys() if key in Event.__dataclass_fields__}  # noqa: SIM118
         try:
             payload["extra"] = json.loads(payload.get("extra") or "{}")
         except json.JSONDecodeError:
@@ -520,7 +546,8 @@ class EventStore:
         (normalized, so a window and its events cannot drift apart) — so it is rehydrated
         here. ``load_members=False`` skips that lookup for bulk streaming.
         """
-        payload = {key: row[key] for key in row.keys() if key in Chunk.__dataclass_fields__}
+        # Same sqlite3.Row caveat as in _row_to_event above — keep `.keys()`.
+        payload = {key: row[key] for key in row.keys() if key in Chunk.__dataclass_fields__}  # noqa: SIM118
         for key in ("event_names", "accounts"):
             try:
                 payload[key] = json.loads(payload.get(key) or "[]")

@@ -2,10 +2,12 @@
 
     slrag ingest --raw data/raw     # parse -> normalize -> window -> sqlite + chunks.jsonl
     slrag stats                     # corpus overview: counts, top talkers, risk
+    slrag index                     # embed every window into the Chroma vector store
+    slrag search "failed sudo ..."  # hybrid retrieval: dense + BM25 -> RRF -> rerank
     slrag version
 
 Runs as the installed console script (``slrag ...``) or as ``python -m slrag ...``.
-Later phases add ``index``, ``search``, ``ask`` and ``eval`` subcommands here.
+Later phases add ``ask`` and ``eval`` subcommands here.
 """
 
 from __future__ import annotations
@@ -20,6 +22,9 @@ from .config import get_settings
 from .ingest.pipeline import run_ingest
 from .ingest.store import EventStore
 from .logging_setup import setup_logging
+from .retrieval.indexer import build_index, read_index_meta
+from .retrieval.pipeline import RetrievalEngine
+from .retrieval.vector_store import INDEX_META_FILE
 
 _RULE = "=" * 68
 
@@ -30,7 +35,7 @@ def _version() -> str:
 
         return version("slrag")
     except Exception:  # pragma: no cover - only when running from a bare checkout
-        return "0.2.0"
+        return "0.3.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -39,7 +44,7 @@ def _version() -> str:
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
-    settings = get_settings()
+    get_settings()
     raw_paths = [Path(p) for p in args.raw]
     missing = [str(p) for p in raw_paths if not p.exists()]
     if missing:
@@ -129,6 +134,175 @@ def _print_ranked(
     print("\n".join(lines))
 
 
+def _collection_count(settings) -> int:
+    """Live collection size, without loading an embedding model."""
+    from .retrieval.vector_store import VectorStore
+
+    try:
+        return VectorStore(settings.chroma_dir, settings=settings).count()
+    except Exception:  # pragma: no cover - defensive
+        return 0
+
+
+def cmd_index(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    chunks_path = Path(args.chunks) if args.chunks else settings.processed_dir / "chunks.jsonl"
+
+    if args.check:
+        meta = read_index_meta(settings.chroma_dir)
+        live = _collection_count(settings)
+        if not meta:
+            if live:
+                print(f"unfinished index at {settings.chroma_dir}")
+                print(_RULE)
+                print(f"{'windows_in_collection':<22} {live:,}")
+                print(_RULE)
+                print(f"no {INDEX_META_FILE} — the run never reached its final step, but every")
+                print("window it committed is still on disk. Re-run `slrag index`: resume")
+                print("skips those ids and embeds only what is missing.")
+                return 2
+            print(f"no index found at {settings.chroma_dir}", file=sys.stderr)
+            print("hint: run `slrag index`", file=sys.stderr)
+            return 2
+        print(f"slrag index — {settings.chroma_dir}")
+        print(_RULE)
+        for key in (
+            "built_at",
+            "collection",
+            "embedding_model",
+            "dimension",
+            "embedding_device",
+            "chunks_indexed",
+            "embedded_this_run",
+            "total_in_collection",
+            "windows_per_second",
+            "chunks_path",
+        ):
+            print(f"{key:<22} {meta.get(key, '-')}")
+        if live and int(meta.get("total_in_collection") or 0) != live:
+            print(f"{'live_count':<22} {live:,}  (differs from the recorded build)")
+        print(_RULE)
+        print(f"meta file: {settings.chroma_dir / INDEX_META_FILE}")
+        return 0
+
+    try:
+        result = build_index(
+            chunks_path,
+            limit=args.limit,
+            reset=args.reset,
+            resume=not getattr(args, "no_resume", False),
+            verbose=not args.json,
+        )
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("hint: run `slrag ingest` first", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2))
+    else:
+        if result.resumed:
+            print(
+                f"\nembedded {result.chunks_indexed:,} new windows in "
+                f"{result.elapsed_s:.1f}s ({result.windows_per_second:.0f}/s) — "
+                f"{result.already_indexed:,} were already indexed and skipped"
+            )
+        else:
+            print(
+                f"\nindexed {result.chunks_indexed:,} windows into '{result.collection}' "
+                f"({result.embedding_model}, {result.dimension}-d, {result.device}) "
+                f"in {result.elapsed_s:.1f}s ({result.windows_per_second:.0f}/s)"
+            )
+        print(f"collection now holds {result.already_indexed + result.chunks_indexed:,} windows")
+        print(f"stored in {result.persist_dir}")
+        print('\nNext:  slrag search "failed sudo commands on the web server"')
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    try:
+        engine = RetrievalEngine.from_settings()
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        result = engine.retrieve(
+            args.query,
+            k=args.k,
+            rerank=False if args.no_rerank else None,
+        )
+        if args.json:
+            print(json.dumps(result.as_dict(), indent=2))
+            return 0
+
+        _print_search(result)
+
+        if args.show_events and result.hits:
+            top = result.hits[0]
+            events = engine.store.events_for_chunk(top.chunk_id)
+            print(f"\nraw records behind {top.chunk_id} (first {args.show_events} of {len(events)}):")
+            for event in events[: args.show_events]:
+                print(f"  [{event.event_id}] {event.ts} {event.action} {event.status}")
+                print(f"      {event.raw.strip()[:180]}")
+    finally:
+        engine.close()
+    return 0
+
+
+def _print_search(result) -> None:
+    diagnostics = result.diagnostics
+    print(f'slrag search — "{result.question}"')
+    print(_RULE)
+
+    if not result.hits:
+        print("no windows matched.")
+        print("  - is the vector index built?   slrag index")
+        print("  - does the corpus have this?   slrag stats")
+        return
+
+    for hit in result.hits:
+        chunk = hit.chunk
+        provenance = " ".join(
+            part
+            for part in (
+                f"dense#{hit.dense_rank}" if hit.dense_rank else "",
+                f"bm25#{hit.bm25_rank}" if hit.bm25_rank else "",
+            )
+            if part
+        )
+        print(
+            f"{hit.rank:>2}. {chunk.chunk_id}  score={hit.score:.4f}  "
+            f"risk={chunk.risk_score:<3} {provenance}"
+        )
+        print(
+            f"    {chunk.ts_start} -> {chunk.ts_end} | {chunk.source} | "
+            f"principal={chunk.principal or '-'} | src_ip={chunk.src_ip or '-'}"
+        )
+        print(
+            f"    events={chunk.n_events} failures={chunk.n_failures} | "
+            f"{', '.join(chunk.event_names[:6])}"
+        )
+        body = [line for line in chunk.text.split("\n")[1:] if line.strip()]
+        if body:
+            print(f"    {body[0][:160]}")
+            if len(body) > 1:
+                print(f"    {body[1][:160]}")
+        print()
+
+    timings = diagnostics["timings_ms"]
+    print(_RULE)
+    print(
+        f"dense {diagnostics['dense_candidates']} | bm25 {diagnostics['bm25_candidates']} | "
+        f"fused {diagnostics['fused_candidates']} | reranker={diagnostics['reranker']} | "
+        f"{timings['total_ms']} ms"
+    )
+    print(
+        f"index {diagnostics['indexed_windows']:,} windows | "
+        f"bm25 {diagnostics['bm25_windows']:,} windows | rrf k={diagnostics['rrf_k']}"
+    )
+
+
 def cmd_version(args: argparse.Namespace) -> int:
     del args
     print(f"slrag {_version()}")
@@ -165,6 +339,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.add_argument("--top", type=int, default=5, help="rows per ranked list")
     p_stats.add_argument("--json", action="store_true", help="machine-readable output")
     p_stats.set_defaults(func=cmd_stats)
+
+    p_index = sub.add_parser("index", help="embed every window into the Chroma vector store")
+    p_index.add_argument("--chunks", default=None, help="chunks.jsonl path (default: data/processed/chunks.jsonl)")
+    p_index.add_argument("--limit", type=int, default=None, help="index only the first N windows")
+    p_index.add_argument("--reset", action="store_true", help="drop the existing collection first")
+    p_index.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="re-embed every window even if it is already in the collection",
+    )
+    p_index.add_argument("--check", action="store_true", help="report the existing index instead of building")
+    p_index.add_argument("--json", action="store_true", help="machine-readable output")
+    p_index.set_defaults(func=cmd_index)
+
+    p_search = sub.add_parser("search", help="hybrid retrieval over the incident windows")
+    p_search.add_argument("query", help="the natural-language question")
+    p_search.add_argument(
+        "-k",
+        "--k",
+        "--top-k",
+        dest="k",
+        type=int,
+        default=None,
+        help="windows to return (default: RETRIEVE_TOP_K)",
+    )
+    p_search.add_argument("--no-rerank", action="store_true", help="skip the cross-encoder")
+    p_search.add_argument("--show-events", type=int, default=0, metavar="N", help="print N raw records behind the top window")
+    p_search.add_argument("--json", action="store_true", help="machine-readable output")
+    p_search.set_defaults(func=cmd_search)
 
     p_version = sub.add_parser("version", help="print the version")
     p_version.set_defaults(func=cmd_version)

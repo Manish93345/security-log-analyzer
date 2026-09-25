@@ -62,3 +62,4 @@ Thumbs.db
 # generated sample corpus — never commit (see the note above)
 slrag-sample-corpus/
 tests/fixtures/sample-corpus/
+chroma-bench

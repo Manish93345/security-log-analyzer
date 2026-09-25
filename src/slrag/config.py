@@ -85,7 +85,21 @@ class Settings:
     embedding_batch_size: int = field(
         default_factory=lambda: _env_int("EMBEDDING_BATCH_SIZE", 64)
     )
+    #: fastembed execution device: ``auto`` | ``cpu`` | ``cuda``. ``auto`` leaves the choice
+    #: to fastembed / ONNX Runtime, so a CPU-only install behaves exactly as before;
+    #: ``cuda`` requires ``onnxruntime-gpu`` with a CUDA/cuDNN runtime the driver supports.
+    embedding_device: str = field(
+        default_factory=lambda: _env("EMBEDDING_DEVICE", "auto").strip().lower()
+    )
+    #: ONNX intra-op threads; 0 lets ONNX Runtime size the pool from the physical cores.
+    embedding_threads: int = field(default_factory=lambda: _env_int("EMBEDDING_THREADS", 0))
     rerank_enabled: bool = field(default_factory=lambda: _env_bool("RERANK_ENABLED", True))
+    #: fastembed (default) | flashrank | none
+    #: fastembed is the default because FlashRank 0.2.10's historical model URL is a 404
+    #: upstream; see src/slrag/retrieval/rerank.py.
+    rerank_backend: str = field(
+        default_factory=lambda: _env("RERANK_BACKEND", "fastembed")
+    )
     rerank_model: str = field(
         default_factory=lambda: _env("RERANK_MODEL", "ms-marco-MiniLM-L-6-v2")
     )
@@ -93,6 +107,19 @@ class Settings:
     retrieve_top_k: int = field(default_factory=lambda: _env_int("RETRIEVE_TOP_K", 5))
     candidate_pool: int = field(default_factory=lambda: _env_int("CANDIDATE_POOL", 50))
     rrf_k: int = field(default_factory=lambda: _env_int("RRF_K", 60))
+    bm25_k1: float = field(default_factory=lambda: _env_float("BM25_K1", 1.5))
+    bm25_b: float = field(default_factory=lambda: _env_float("BM25_B", 0.75))
+    #: Caps tokens per window in the BM25 index. BM25 keeps the whole tokenised corpus in
+    #: memory; a window is highly repetitive, so 512 tokens (≈2.5 KB) captures the signal
+    #: while bounding RAM on a large corpus. Set to 0 for no cap.
+    bm25_max_tokens: int = field(default_factory=lambda: _env_int("BM25_MAX_TOKENS", 512))
+    index_batch_size: int = field(default_factory=lambda: _env_int("INDEX_BATCH_SIZE", 256))
+    #: Skip windows already present in the collection so an interrupted index resumes
+    #: instead of re-embedding the whole corpus. See src/slrag/retrieval/indexer.py.
+    index_resume: bool = field(default_factory=lambda: _env_bool("INDEX_RESUME", True))
+    chroma_collection: str = field(
+        default_factory=lambda: _env("CHROMA_COLLECTION", "slrag_windows")
+    )
 
     # --- paths -------------------------------------------------------------
     data_dir: Path = field(default_factory=lambda: _env_path("DATA_DIR", "data"))

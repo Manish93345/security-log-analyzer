@@ -36,7 +36,6 @@ DOCTOR_IMPORTS = (
     "langchain_chroma",
     "chromadb",
     "fastembed",
-    "flashrank",
     "fastapi",
     "streamlit",
     "dotenv",
@@ -311,9 +310,26 @@ def task_stats(args: argparse.Namespace) -> int:
 
 
 def task_index(args: argparse.Namespace) -> int:
+    """Phase 3: embed every window into the Chroma vector store."""
+    if getattr(args, "check", False):
+        return py_module(["slrag.cli", "index", "--check"]).returncode
     cmd = ["slrag.cli", "index", "--chunks", "data/processed/chunks.jsonl"]
     if args.limit:
         cmd += ["--limit", str(args.limit)]
+    if getattr(args, "reset", False):
+        cmd.append("--reset")
+    return py_module(cmd).returncode
+
+
+def task_search(args: argparse.Namespace) -> int:
+    """Phase 3: hybrid retrieval from the command line."""
+    cmd = ["slrag.cli", "search", args.query, "-k", str(args.k)]
+    if getattr(args, "no_rerank", False):
+        cmd.append("--no-rerank")
+    if getattr(args, "show_events", 0):
+        cmd += ["--show-events", str(args.show_events)]
+    if getattr(args, "json", False):
+        cmd.append("--json")
     return py_module(cmd).returncode
 
 
@@ -480,6 +496,14 @@ def build_parser() -> argparse.ArgumentParser:
     add("stats", task_stats, "corpus overview from the sqlite store (Phase 2)")
     node = add("index", task_index, "embed chunks into Chroma (Phase 3)")
     node.add_argument("--limit", type=int, default=None, help="index only the first N chunks")
+    node.add_argument("--reset", action="store_true", help="drop the collection before indexing")
+    node.add_argument("--check", action="store_true", help="report the existing index and exit")
+    node = add("search", task_search, "hybrid retrieval from the CLI (Phase 3)")
+    node.add_argument("query", help="the natural-language question")
+    node.add_argument("-k", type=int, default=5, help="windows to return (default: 5)")
+    node.add_argument("--no-rerank", action="store_true", help="skip the cross-encoder")
+    node.add_argument("--show-events", type=int, default=0, metavar="N", help="print N raw records behind the top window")
+    node.add_argument("--json", action="store_true", help="machine-readable output")
     node = add("ask", task_ask, "ask a question from the CLI (Phase 4)")
     node.add_argument("question", help="the natural-language question")
     add("eval", task_eval, "run the retrieval eval harness (Phase 5)")
